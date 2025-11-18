@@ -2,37 +2,42 @@
 let currentStudent = null;
 let currentSession = null;
 let thesisContent = '';
-let speechSynthesis = window.speechSynthesis;
-let recognition = null;
+let studentName = '';
+let mediaRecorder = null;
+let audioChunks = [];
 let isRecording = false;
+let aiInfo = null;
 
-// Initialize Speech Recognition
-if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    recognition.lang = 'id-ID';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-
-    recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        document.getElementById('answer-input').value = transcript;
-        isRecording = false;
-        updateMicButton();
-    };
-
-    recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        isRecording = false;
-        updateMicButton();
-        showMessage('Error: Gagal mengenali suara. Pastikan mikrofon aktif.', 'error');
-    };
-
-    recognition.onend = () => {
-        isRecording = false;
-        updateMicButton();
-    };
+// Check AI capabilities on load
+async function checkAICapabilities() {
+    try {
+        const response = await fetch('/api/ai-info');
+        const data = await response.json();
+        aiInfo = data;
+        console.log('AI Info:', aiInfo);
+    } catch (error) {
+        console.error('Error checking AI capabilities:', error);
+        aiInfo = { provider: 'fallback', features: { tts: false, stt: false } };
+    }
 }
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    checkAICapabilities();
+
+    // Login form enter key
+    document.getElementById('login-nim')?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') login();
+    });
+
+    // Answer input enter key
+    document.getElementById('answer-input')?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            submitAnswer();
+        }
+    });
+});
 
 // Tab switching
 function switchTab(tab) {
@@ -246,6 +251,7 @@ async function startDefense(thesisId) {
                 thesisId: thesisId
             };
             thesisContent = data.thesisContent;
+            studentName = data.studentName;
 
             showDefenseSession();
 
@@ -284,7 +290,7 @@ async function generateQuestion() {
             body: JSON.stringify({
                 sessionId: currentSession.id,
                 thesisContent: thesisContent,
-                previousMessages: []
+                studentName: studentName
             })
         });
 
@@ -292,7 +298,7 @@ async function generateQuestion() {
 
         if (response.ok) {
             addMessage('dosen', data.question);
-            speakText(data.question);
+            await speakText(data.question);
             setAIStatus('Mendengarkan...', false);
         } else {
             console.error('Question generation failed:', data.error);
@@ -350,21 +356,78 @@ async function submitAnswer() {
 }
 
 // Toggle speech recognition
-function toggleSpeechRecognition() {
-    if (!recognition) {
-        alert('Speech recognition tidak didukung di browser Anda');
-        return;
-    }
-
+async function toggleSpeechRecognition() {
     if (isRecording) {
-        recognition.stop();
-        isRecording = false;
+        stopRecording();
     } else {
-        recognition.start();
-        isRecording = true;
+        startRecording();
     }
+}
 
-    updateMicButton();
+// Start recording audio
+async function startRecording() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+            audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            await transcribeAudio(audioBlob);
+
+            // Stop all tracks
+            stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+        updateMicButton();
+    } catch (error) {
+        console.error('Error starting recording:', error);
+        alert('Gagal mengakses mikrofon. Pastikan Anda memberikan izin mikrofon.');
+    }
+}
+
+// Stop recording audio
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        isRecording = false;
+        updateMicButton();
+    }
+}
+
+// Transcribe audio using API
+async function transcribeAudio(audioBlob) {
+    try {
+        setAIStatus('Mendengarkan...', true);
+
+        const formData = new FormData();
+        formData.append('audio', audioBlob, 'recording.webm');
+
+        const response = await fetch('/api/stt', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            document.getElementById('answer-input').value = data.text;
+        } else {
+            console.error('Transcription failed:', data.error);
+            alert('Gagal mengenali suara. Silakan coba lagi atau ketik jawaban Anda.');
+        }
+    } catch (error) {
+        console.error('Transcription error:', error);
+        alert('Terjadi kesalahan saat mengenali suara.');
+    } finally {
+        setAIStatus('Mendengarkan...', false);
+    }
 }
 
 // Update mic button appearance
@@ -373,41 +436,86 @@ function updateMicButton() {
     if (isRecording) {
         micBtn.classList.add('recording');
         micBtn.title = 'Berhenti merekam';
+        micBtn.textContent = '⏹️';
     } else {
         micBtn.classList.remove('recording');
         micBtn.title = 'Bicara';
+        micBtn.textContent = '🎤';
     }
 }
 
-// Text to speech
-function speakText(text) {
-    if (!speechSynthesis) {
+// Text to speech using API
+async function speakText(text) {
+    try {
+        setAIStatus('Berbicara...', true);
+
+        const response = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text })
+        });
+
+        if (response.headers.get('Content-Type')?.includes('audio/mpeg')) {
+            // OpenAI TTS response
+            const audioBlob = await response.blob();
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+
+            audio.onended = () => {
+                setAIStatus('Mendengarkan...', false);
+                URL.revokeObjectURL(audioUrl);
+            };
+
+            audio.onerror = () => {
+                console.error('Audio playback error');
+                setAIStatus('Mendengarkan...', false);
+                URL.revokeObjectURL(audioUrl);
+            };
+
+            await audio.play();
+        } else {
+            // Fallback to browser TTS
+            const data = await response.json();
+            if (data.method === 'client' || !aiInfo?.features?.tts) {
+                await speakWithBrowserTTS(text);
+            }
+        }
+    } catch (error) {
+        console.error('TTS error:', error);
+        // Fallback to browser TTS
+        await speakWithBrowserTTS(text);
+    }
+}
+
+// Fallback browser TTS
+async function speakWithBrowserTTS(text) {
+    if (!window.speechSynthesis) {
         console.error('Speech synthesis not supported');
+        setAIStatus('Mendengarkan...', false);
         return;
     }
 
-    // Cancel any ongoing speech
-    speechSynthesis.cancel();
+    return new Promise((resolve) => {
+        speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'id-ID';
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'id-ID';
+        utterance.rate = 0.9;
+        utterance.pitch = 1;
 
-    utterance.onstart = () => {
-        setAIStatus('Berbicara...', true);
-    };
+        utterance.onend = () => {
+            setAIStatus('Mendengarkan...', false);
+            resolve();
+        };
 
-    utterance.onend = () => {
-        setAIStatus('Mendengarkan...', false);
-    };
+        utterance.onerror = (event) => {
+            console.error('Speech synthesis error:', event);
+            setAIStatus('Mendengarkan...', false);
+            resolve();
+        };
 
-    utterance.onerror = (event) => {
-        console.error('Speech synthesis error:', event);
-        setAIStatus('Mendengarkan...', false);
-    };
-
-    speechSynthesis.speak(utterance);
+        speechSynthesis.speak(utterance);
+    });
 }
 
 // Set AI status
@@ -462,11 +570,20 @@ function showEvaluation(evaluation) {
     const chatMessages = document.getElementById('chat-messages');
     const lastMessage = chatMessages.lastElementChild;
 
+    let feedbackHtml = `<strong>📊 Evaluasi:</strong><br>${evaluation.feedback}<br>`;
+
+    if (evaluation.strengths) {
+        feedbackHtml += `<br><strong>✅ Kelebihan:</strong> ${evaluation.strengths}<br>`;
+    }
+
+    if (evaluation.improvements) {
+        feedbackHtml += `<strong>💡 Saran:</strong> ${evaluation.improvements}<br>`;
+    }
+
     const evalDiv = document.createElement('div');
     evalDiv.className = 'message-evaluation';
     evalDiv.innerHTML = `
-        <strong>📊 Evaluasi:</strong><br>
-        ${evaluation.feedback}<br>
+        ${feedbackHtml}
         <span class="score-badge">Nilai: ${evaluation.score}/100</span>
     `;
 
@@ -478,10 +595,12 @@ function showEvaluation(evaluation) {
     evalBox.innerHTML = `
         <h4>Evaluasi Terakhir</h4>
         <p>${evaluation.feedback}</p>
+        ${evaluation.strengths ? `<p><strong>Kelebihan:</strong> ${evaluation.strengths}</p>` : ''}
+        ${evaluation.improvements ? `<p><strong>Saran:</strong> ${evaluation.improvements}</p>` : ''}
         <div class="score-badge">Nilai: ${evaluation.score}/100</div>
     `;
 
-    // Speak evaluation
+    // Speak evaluation feedback
     speakText(evaluation.feedback);
 }
 
@@ -570,19 +689,3 @@ function showMessage(message, type) {
     messageElement.className = `message ${type}`;
     messageElement.style.display = 'block';
 }
-
-// Enter key support for inputs
-document.addEventListener('DOMContentLoaded', () => {
-    // Login form
-    document.getElementById('login-nim')?.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') login();
-    });
-
-    // Answer input
-    document.getElementById('answer-input')?.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            submitAnswer();
-        }
-    });
-});
