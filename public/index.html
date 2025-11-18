@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulasi Sidang Skripsi - AI Powered</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Registration/Login Section -->
+        <div id="auth-section" class="section">
+            <div class="card">
+                <h1>🎓 Simulasi Sidang Skripsi</h1>
+                <p class="subtitle">Latih sidang skripsi Anda dengan AI Dosen Penguji</p>
+
+                <div class="tabs">
+                    <button class="tab active" onclick="switchTab('login')">Login</button>
+                    <button class="tab" onclick="switchTab('register')">Daftar</button>
+                </div>
+
+                <!-- Login Form -->
+                <div id="login-form" class="auth-form">
+                    <h2>Login</h2>
+                    <div class="form-group">
+                        <label for="login-nim">NIM</label>
+                        <input type="text" id="login-nim" placeholder="Masukkan NIM Anda" required>
+                    </div>
+                    <button onclick="login()" class="btn btn-primary">Masuk</button>
+                </div>
+
+                <!-- Register Form -->
+                <div id="register-form" class="auth-form" style="display: none;">
+                    <h2>Daftar Akun Baru</h2>
+                    <div class="form-group">
+                        <label for="reg-nim">NIM *</label>
+                        <input type="text" id="reg-nim" placeholder="Contoh: 123456789" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-nama">Nama Lengkap *</label>
+                        <input type="text" id="reg-nama" placeholder="Nama lengkap Anda" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-hp">Nomor HP *</label>
+                        <input type="tel" id="reg-hp" placeholder="Contoh: 081234567890" required>
+                    </div>
+                    <button onclick="register()" class="btn btn-primary">Daftar</button>
+                </div>
+
+                <div id="auth-message" class="message"></div>
+            </div>
+        </div>
+
+        <!-- Dashboard Section -->
+        <div id="dashboard-section" class="section" style="display: none;">
+            <div class="header">
+                <div>
+                    <h1>Dashboard Mahasiswa</h1>
+                    <p id="student-info"></p>
+                </div>
+                <button onclick="logout()" class="btn btn-secondary">Logout</button>
+            </div>
+
+            <div class="card">
+                <h2>📄 Upload Skripsi</h2>
+                <p>Upload file skripsi Anda (PDF atau TXT) untuk memulai simulasi sidang</p>
+                <div class="upload-area">
+                    <input type="file" id="thesis-file" accept=".pdf,.txt" onchange="handleFileSelect()">
+                    <label for="thesis-file" class="upload-label">
+                        <span class="upload-icon">📁</span>
+                        <span id="file-name">Pilih file PDF atau TXT</span>
+                    </label>
+                    <button onclick="uploadThesis()" class="btn btn-primary" id="upload-btn" disabled>Upload Skripsi</button>
+                </div>
+
+                <div id="thesis-list"></div>
+            </div>
+        </div>
+
+        <!-- Defense Session Section -->
+        <div id="defense-section" class="section" style="display: none;">
+            <div class="header">
+                <div>
+                    <h1>🎤 Sidang Skripsi Virtual</h1>
+                    <p id="session-info"></p>
+                </div>
+                <button onclick="endDefense()" class="btn btn-danger">Akhiri Sidang</button>
+            </div>
+
+            <div class="defense-container">
+                <!-- AI Lecturer Avatar -->
+                <div class="lecturer-panel">
+                    <div class="avatar-container">
+                        <div class="avatar">👨‍🏫</div>
+                        <div class="avatar-status" id="ai-status">Mendengarkan...</div>
+                    </div>
+                    <h3>Dr. AI Penguji, M.Kom</h3>
+                    <p class="lecturer-info">Dosen Penguji Virtual</p>
+                    <div id="current-evaluation" class="evaluation-box"></div>
+                </div>
+
+                <!-- Chat Interface -->
+                <div class="chat-panel">
+                    <div id="chat-messages" class="chat-messages"></div>
+
+                    <div class="chat-input-area">
+                        <div class="input-controls">
+                            <button id="mic-btn" onclick="toggleSpeechRecognition()" class="btn-icon" title="Bicara">
+                                🎤
+                            </button>
+                            <textarea id="answer-input" placeholder="Ketik jawaban Anda di sini..." rows="3"></textarea>
+                            <button onclick="submitAnswer()" class="btn btn-primary">Kirim</button>
+                        </div>
+                        <div class="controls-info">
+                            <small>Tekan 🎤 untuk berbicara atau ketik jawaban Anda</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results-section" class="section" style="display: none;">
+            <div class="card">
+                <h1>📊 Hasil Sidang</h1>
+                <div class="results-container">
+                    <div class="score-display">
+                        <div class="score-label">Nilai Akhir</div>
+                        <div class="score-value" id="final-score">0</div>
+                        <div class="score-grade" id="score-grade"></div>
+                    </div>
+
+                    <div id="session-summary"></div>
+
+                    <div class="action-buttons">
+                        <button onclick="backToDashboard()" class="btn btn-primary">Kembali ke Dashboard</button>
+                        <button onclick="startNewDefense()" class="btn btn-secondary">Sidang Baru</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
