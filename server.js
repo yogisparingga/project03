@@ -58,12 +58,71 @@ const db = new sqlite3.Database('./thesis_defense.db', (err) => {
 
 // Initialize database tables
 function initDatabase() {
+  // Admin users table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS admins (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      nama TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Create default admin if not exists (username: admin, password: admin123)
+  db.get('SELECT id FROM admins WHERE username = ?', ['admin'], (err, row) => {
+    if (!row) {
+      db.run(
+        'INSERT INTO admins (username, password, nama) VALUES (?, ?, ?)',
+        ['admin', 'admin123', 'Administrator']
+      );
+      console.log('✓ Default admin created (username: admin, password: admin123)');
+    }
+  });
+
+  // AI Settings table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS ai_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      setting_key TEXT UNIQUE NOT NULL,
+      setting_value TEXT NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Initialize default AI settings
+  const defaultSettings = [
+    { key: 'system_prompt', value: `Anda adalah Dr. AI Penguji, seorang dosen pembimbing yang berpengalaman dalam sidang skripsi.
+Tugas Anda adalah mengajukan pertanyaan yang relevan, kritis, dan konstruktif kepada mahasiswa berdasarkan konten skripsi mereka.
+
+Gaya pertanyaan:
+- Profesional namun ramah
+- Mendalam dan analitis
+- Membantu mahasiswa berpikir kritis
+- Fokus pada metodologi, hasil, dan kontribusi penelitian` },
+    { key: 'temperature', value: '0.7' },
+    { key: 'max_tokens', value: '300' },
+    { key: 'ai_name', value: 'Dr. AI Penguji, M.Kom' }
+  ];
+
+  defaultSettings.forEach(setting => {
+    db.get('SELECT id FROM ai_settings WHERE setting_key = ?', [setting.key], (err, row) => {
+      if (!row) {
+        db.run(
+          'INSERT INTO ai_settings (setting_key, setting_value) VALUES (?, ?)',
+          [setting.key, setting.value]
+        );
+      }
+    });
+  });
+
   db.run(`
     CREATE TABLE IF NOT EXISTS students (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nim TEXT UNIQUE NOT NULL,
       nama TEXT NOT NULL,
       no_hp TEXT UNIQUE NOT NULL,
+      status TEXT DEFAULT 'active',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -74,6 +133,7 @@ function initDatabase() {
       student_id INTEGER NOT NULL,
       filename TEXT NOT NULL,
       content TEXT NOT NULL,
+      file_path TEXT,
       uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (student_id) REFERENCES students(id)
     )
@@ -149,14 +209,10 @@ const audioUpload = multer({
 // Generate question using AI
 async function generateAIQuestion(thesisContent, conversationHistory, studentName) {
   try {
-    const systemPrompt = `Anda adalah Dr. AI Penguji, seorang dosen pembimbing yang berpengalaman dalam sidang skripsi.
-Tugas Anda adalah mengajukan pertanyaan yang relevan, kritis, dan konstruktif kepada mahasiswa berdasarkan konten skripsi mereka.
+    // Get AI settings from database
+    const aiSettings = await getAISettings();
 
-Gaya pertanyaan:
-- Profesional namun ramah
-- Mendalam dan analitis
-- Membantu mahasiswa berpikir kritis
-- Fokus pada metodologi, hasil, dan kontribusi penelitian
+    const systemPrompt = `${aiSettings.system_prompt}
 
 Mahasiswa: ${studentName}
 
@@ -169,6 +225,9 @@ ${conversationHistory.length === 0 ?
 
     let question = '';
 
+    const temperature = parseFloat(aiSettings.temperature) || 0.7;
+    const maxTokens = parseInt(aiSettings.max_tokens) || 300;
+
     if (AI_PROVIDER === 'openai' && openai) {
       const messages = [
         { role: 'system', content: systemPrompt },
@@ -178,8 +237,8 @@ ${conversationHistory.length === 0 ?
       const completion = await openai.chat.completions.create({
         model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
         messages: messages,
-        temperature: 0.7,
-        max_tokens: 300
+        temperature: temperature,
+        max_tokens: maxTokens
       });
 
       question = completion.choices[0].message.content;
@@ -202,8 +261,8 @@ ${conversationHistory.length === 0 ?
       const completion = await groq.chat.completions.create({
         model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
         messages: messages,
-        temperature: 0.7,
-        max_tokens: 300
+        temperature: temperature,
+        max_tokens: maxTokens
       });
 
       question = completion.choices[0].message.content;
@@ -765,6 +824,283 @@ app.get('/api/ai-info', (req, res) => {
     }
   });
 });
+
+// ============== ADMIN API ROUTES ==============
+
+// Admin Login
+app.post('/api/admin/login', (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username dan password harus diisi' });
+  }
+
+  const query = 'SELECT * FROM admins WHERE username = ? AND password = ?';
+  db.get(query, [username, password], (err, admin) => {
+    if (err) {
+      return res.status(500).json({ error: 'Error saat login' });
+    }
+    if (!admin) {
+      return res.status(401).json({ error: 'Username atau password salah' });
+    }
+
+    res.json({
+      success: true,
+      admin: {
+        id: admin.id,
+        username: admin.username,
+        nama: admin.nama
+      }
+    });
+  });
+});
+
+// Get Dashboard Statistics
+app.get('/api/admin/stats', (req, res) => {
+  const stats = {};
+
+  db.get('SELECT COUNT(*) as count FROM students', (err, result) => {
+    stats.totalStudents = result ? result.count : 0;
+
+    db.get('SELECT COUNT(*) as count FROM thesis_uploads', (err, result) => {
+      stats.totalThesis = result ? result.count : 0;
+
+      db.get('SELECT COUNT(*) as count FROM defense_sessions', (err, result) => {
+        stats.totalSessions = result ? result.count : 0;
+
+        db.get('SELECT COUNT(*) as count FROM defense_sessions WHERE status = "completed"', (err, result) => {
+          stats.completedSessions = result ? result.count : 0;
+
+          db.get('SELECT AVG(final_score) as avg FROM defense_sessions WHERE status = "completed"', (err, result) => {
+            stats.averageScore = result && result.avg ? result.avg.toFixed(2) : 0;
+
+            res.json({ success: true, stats });
+          });
+        });
+      });
+    });
+  });
+});
+
+// Get All Students
+app.get('/api/admin/students', (req, res) => {
+  const query = `
+    SELECT
+      s.*,
+      COUNT(DISTINCT t.id) as thesis_count,
+      COUNT(DISTINCT ds.id) as session_count
+    FROM students s
+    LEFT JOIN thesis_uploads t ON s.id = t.student_id
+    LEFT JOIN defense_sessions ds ON s.id = ds.student_id
+    GROUP BY s.id
+    ORDER BY s.created_at DESC
+  `;
+
+  db.all(query, (err, students) => {
+    if (err) {
+      return res.status(500).json({ error: 'Error mengambil data mahasiswa' });
+    }
+    res.json({ success: true, students });
+  });
+});
+
+// Update Student Status
+app.put('/api/admin/students/:id/status', (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  db.run(
+    'UPDATE students SET status = ? WHERE id = ?',
+    [status, id],
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Error mengupdate status' });
+      }
+      res.json({ success: true, message: 'Status berhasil diupdate' });
+    }
+  );
+});
+
+// Delete Student
+app.delete('/api/admin/students/:id', (req, res) => {
+  const { id } = req.params;
+
+  // Delete related data first
+  db.run('DELETE FROM chat_messages WHERE session_id IN (SELECT id FROM defense_sessions WHERE student_id = ?)', [id]);
+  db.run('DELETE FROM defense_sessions WHERE student_id = ?', [id]);
+  db.run('DELETE FROM thesis_uploads WHERE student_id = ?', [id]);
+  db.run('DELETE FROM students WHERE id = ?', [id], function(err) {
+    if (err) {
+      return res.status(500).json({ error: 'Error menghapus mahasiswa' });
+    }
+    res.json({ success: true, message: 'Mahasiswa berhasil dihapus' });
+  });
+});
+
+// Get All Thesis Files
+app.get('/api/admin/thesis', (req, res) => {
+  const query = `
+    SELECT
+      t.*,
+      s.nim,
+      s.nama as student_name,
+      COUNT(DISTINCT ds.id) as session_count
+    FROM thesis_uploads t
+    JOIN students s ON t.student_id = s.id
+    LEFT JOIN defense_sessions ds ON t.id = ds.thesis_id
+    GROUP BY t.id
+    ORDER BY t.uploaded_at DESC
+  `;
+
+  db.all(query, (err, files) => {
+    if (err) {
+      return res.status(500).json({ error: 'Error mengambil data file' });
+    }
+    res.json({ success: true, files });
+  });
+});
+
+// Delete Thesis File
+app.delete('/api/admin/thesis/:id', (req, res) => {
+  const { id } = req.params;
+
+  // Get file info first
+  db.get('SELECT * FROM thesis_uploads WHERE id = ?', [id], (err, file) => {
+    if (err || !file) {
+      return res.status(500).json({ error: 'File tidak ditemukan' });
+    }
+
+    // Delete from database
+    db.run('DELETE FROM chat_messages WHERE session_id IN (SELECT id FROM defense_sessions WHERE thesis_id = ?)', [id]);
+    db.run('DELETE FROM defense_sessions WHERE thesis_id = ?', [id]);
+    db.run('DELETE FROM thesis_uploads WHERE id = ?', [id], function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Error menghapus file' });
+      }
+      res.json({ success: true, message: 'File berhasil dihapus' });
+    });
+  });
+});
+
+// Get All Defense Sessions
+app.get('/api/admin/sessions', (req, res) => {
+  const query = `
+    SELECT
+      ds.*,
+      s.nim,
+      s.nama as student_name,
+      t.filename as thesis_filename,
+      COUNT(cm.id) as message_count
+    FROM defense_sessions ds
+    JOIN students s ON ds.student_id = s.id
+    JOIN thesis_uploads t ON ds.thesis_id = t.id
+    LEFT JOIN chat_messages cm ON ds.id = cm.session_id
+    GROUP BY ds.id
+    ORDER BY ds.started_at DESC
+  `;
+
+  db.all(query, (err, sessions) => {
+    if (err) {
+      return res.status(500).json({ error: 'Error mengambil data sesi' });
+    }
+    res.json({ success: true, sessions });
+  });
+});
+
+// Get Session Detail
+app.get('/api/admin/sessions/:id', (req, res) => {
+  const { id } = req.params;
+
+  db.get(`
+    SELECT
+      ds.*,
+      s.nim,
+      s.nama as student_name,
+      s.no_hp,
+      t.filename as thesis_filename
+    FROM defense_sessions ds
+    JOIN students s ON ds.student_id = s.id
+    JOIN thesis_uploads t ON ds.thesis_id = t.id
+    WHERE ds.id = ?
+  `, [id], (err, session) => {
+    if (err || !session) {
+      return res.status(500).json({ error: 'Sesi tidak ditemukan' });
+    }
+
+    // Get chat messages
+    db.all(
+      'SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC',
+      [id],
+      (err, messages) => {
+        if (err) {
+          return res.status(500).json({ error: 'Error mengambil pesan' });
+        }
+
+        session.messages = messages;
+        res.json({ success: true, session });
+      }
+    );
+  });
+});
+
+// Get AI Settings
+app.get('/api/admin/ai-settings', (req, res) => {
+  db.all('SELECT * FROM ai_settings', (err, settings) => {
+    if (err) {
+      return res.status(500).json({ error: 'Error mengambil pengaturan AI' });
+    }
+
+    const settingsObj = {};
+    settings.forEach(s => {
+      settingsObj[s.setting_key] = s.setting_value;
+    });
+
+    res.json({ success: true, settings: settingsObj });
+  });
+});
+
+// Update AI Settings
+app.put('/api/admin/ai-settings', (req, res) => {
+  const { system_prompt, temperature, max_tokens, ai_name } = req.body;
+
+  const updates = [
+    { key: 'system_prompt', value: system_prompt },
+    { key: 'temperature', value: temperature },
+    { key: 'max_tokens', value: max_tokens },
+    { key: 'ai_name', value: ai_name }
+  ];
+
+  let completed = 0;
+  updates.forEach(update => {
+    db.run(
+      'UPDATE ai_settings SET setting_value = ?, updated_at = CURRENT_TIMESTAMP WHERE setting_key = ?',
+      [update.value, update.key],
+      (err) => {
+        completed++;
+        if (completed === updates.length) {
+          res.json({ success: true, message: 'Pengaturan AI berhasil diupdate' });
+        }
+      }
+    );
+  });
+});
+
+// Helper function to get AI settings from database
+async function getAISettings() {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT * FROM ai_settings', (err, settings) => {
+      if (err) {
+        reject(err);
+      } else {
+        const settingsObj = {};
+        settings.forEach(s => {
+          settingsObj[s.setting_key] = s.setting_value;
+        });
+        resolve(settingsObj);
+      }
+    });
+  });
+}
 
 // Start server
 app.listen(PORT, () => {

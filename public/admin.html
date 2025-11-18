@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Simulasi Sidang Skripsi</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="admin-style.css">
+</head>
+<body>
+    <div class="admin-container">
+        <!-- Login Section -->
+        <div id="admin-login-section" class="section">
+            <div class="login-card">
+                <h1>🔐 Admin Login</h1>
+                <p class="subtitle">Simulasi Sidang Skripsi - Admin Panel</p>
+
+                <div class="form-group">
+                    <label for="admin-username">Username</label>
+                    <input type="text" id="admin-username" placeholder="Masukkan username" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="admin-password">Password</label>
+                    <input type="password" id="admin-password" placeholder="Masukkan password" required>
+                </div>
+
+                <button onclick="adminLogin()" class="btn btn-primary btn-block">Login</button>
+
+                <div id="admin-login-message" class="message"></div>
+
+                <div class="footer-link">
+                    <a href="index.html">← Kembali ke halaman utama</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard Section -->
+        <div id="admin-dashboard-section" class="section" style="display: none;">
+            <!-- Sidebar -->
+            <div class="admin-sidebar">
+                <div class="sidebar-header">
+                    <h2>📊 Admin Panel</h2>
+                    <p id="admin-name"></p>
+                </div>
+
+                <nav class="sidebar-menu">
+                    <a href="#" class="menu-item active" onclick="showTab('dashboard')">
+                        <span class="icon">📈</span>
+                        Dashboard
+                    </a>
+                    <a href="#" class="menu-item" onclick="showTab('students')">
+                        <span class="icon">👥</span>
+                        Mahasiswa
+                    </a>
+                    <a href="#" class="menu-item" onclick="showTab('thesis')">
+                        <span class="icon">📄</span>
+                        File Skripsi
+                    </a>
+                    <a href="#" class="menu-item" onclick="showTab('sessions')">
+                        <span class="icon">🎤</span>
+                        Sesi Sidang
+                    </a>
+                    <a href="#" class="menu-item" onclick="showTab('ai-settings')">
+                        <span class="icon">🤖</span>
+                        Pengaturan AI
+                    </a>
+                    <a href="#" class="menu-item" onclick="adminLogout()">
+                        <span class="icon">🚪</span>
+                        Logout
+                    </a>
+                </nav>
+            </div>
+
+            <!-- Main Content -->
+            <div class="admin-main">
+                <!-- Dashboard Tab -->
+                <div id="tab-dashboard" class="admin-tab">
+                    <h1>Dashboard</h1>
+
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon">👥</div>
+                            <div class="stat-content">
+                                <h3 id="stat-students">0</h3>
+                                <p>Total Mahasiswa</p>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-icon">📄</div>
+                            <div class="stat-content">
+                                <h3 id="stat-thesis">0</h3>
+                                <p>Total File Skripsi</p>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-icon">🎤</div>
+                            <div class="stat-content">
+                                <h3 id="stat-sessions">0</h3>
+                                <p>Total Sesi Sidang</p>
+                            </div>
+                        </div>
+
+                        <div class="stat-card">
+                            <div class="stat-icon">✅</div>
+                            <div class="stat-content">
+                                <h3 id="stat-completed">0</h3>
+                                <p>Sidang Selesai</p>
+                            </div>
+                        </div>
+
+                        <div class="stat-card stat-card-highlight">
+                            <div class="stat-icon">⭐</div>
+                            <div class="stat-content">
+                                <h3 id="stat-avg-score">0</h3>
+                                <p>Rata-rata Nilai</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Students Tab -->
+                <div id="tab-students" class="admin-tab" style="display: none;">
+                    <h1>Manajemen Mahasiswa</h1>
+
+                    <div class="table-container">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>NIM</th>
+                                    <th>Nama</th>
+                                    <th>No. HP</th>
+                                    <th>Status</th>
+                                    <th>File Skripsi</th>
+                                    <th>Sesi</th>
+                                    <th>Terdaftar</th>
+                                    <th>Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="students-table-body">
+                                <tr>
+                                    <td colspan="8" style="text-align: center;">Memuat data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Thesis Tab -->
+                <div id="tab-thesis" class="admin-tab" style="display: none;">
+                    <h1>Manajemen File Skripsi</h1>
+
+                    <div class="table-container">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>Filename</th>
+                                    <th>Mahasiswa</th>
+                                    <th>NIM</th>
+                                    <th>Jumlah Sesi</th>
+                                    <th>Upload</th>
+                                    <th>Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="thesis-table-body">
+                                <tr>
+                                    <td colspan="6" style="text-align: center;">Memuat data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Sessions Tab -->
+                <div id="tab-sessions" class="admin-tab" style="display: none;">
+                    <h1>Riwayat Sesi Sidang</h1>
+
+                    <div class="table-container">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Mahasiswa</th>
+                                    <th>NIM</th>
+                                    <th>File Skripsi</th>
+                                    <th>Mulai</th>
+                                    <th>Selesai</th>
+                                    <th>Status</th>
+                                    <th>Nilai</th>
+                                    <th>Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sessions-table-body">
+                                <tr>
+                                    <td colspan="9" style="text-align: center;">Memuat data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- AI Settings Tab -->
+                <div id="tab-ai-settings" class="admin-tab" style="display: none;">
+                    <h1>Pengaturan AI</h1>
+
+                    <div class="settings-container">
+                        <div class="card">
+                            <h2>Persona AI Dosen</h2>
+                            <p class="subtitle">Atur karakter dan perilaku AI sebagai dosen penguji</p>
+
+                            <div class="form-group">
+                                <label for="ai-name">Nama AI Dosen</label>
+                                <input type="text" id="ai-name" placeholder="Dr. AI Penguji, M.Kom">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="system-prompt">System Prompt</label>
+                                <textarea id="system-prompt" rows="10" placeholder="Masukkan system prompt untuk AI..."></textarea>
+                                <small>Definisikan karakter, gaya bicara, dan aturan untuk AI dosen penguji</small>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <h2>Parameter AI</h2>
+                            <p class="subtitle">Atur parameter teknis untuk generasi AI</p>
+
+                            <div class="form-group">
+                                <label for="temperature">Temperature: <span id="temp-value">0.7</span></label>
+                                <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.7"
+                                       oninput="document.getElementById('temp-value').textContent = this.value">
+                                <small>Kontrol kreativitas AI (0 = konsisten, 2 = sangat kreatif)</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="max-tokens">Max Tokens: <span id="tokens-value">300</span></label>
+                                <input type="range" id="max-tokens" min="50" max="1000" step="50" value="300"
+                                       oninput="document.getElementById('tokens-value').textContent = this.value">
+                                <small>Panjang maksimal respons AI (dalam token)</small>
+                            </div>
+
+                            <button onclick="saveAISettings()" class="btn btn-primary">Simpan Pengaturan</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Session Detail Modal -->
+        <div id="session-modal" class="modal" style="display: none;">
+            <div class="modal-content modal-large">
+                <span class="close" onclick="closeSessionModal()">&times;</span>
+                <h2>Detail Sesi Sidang</h2>
+                <div id="session-detail-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="admin-script.js"></script>
+</body>
+</html>
