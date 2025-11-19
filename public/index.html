@@ -22,9 +22,17 @@
                 <!-- Login Form -->
                 <div id="login-form" class="auth-form">
                     <h2>Login</h2>
+
+                    <!-- Google OAuth Login -->
+                    <a href="/auth/google" class="btn btn-primary" style="display: block; text-decoration: none; margin-bottom: 15px; background: #4285f4;">
+                        🔐 Login dengan Google
+                    </a>
+
+                    <div style="text-align: center; margin: 15px 0; color: #6c757d;">atau</div>
+
                     <div class="form-group">
-                        <label for="login-nim">NIM</label>
-                        <input type="text" id="login-nim" placeholder="Masukkan NIM Anda" required>
+                        <label for="login-nim">NIM atau No HP</label>
+                        <input type="text" id="login-nim" placeholder="Masukkan NIM atau No HP Anda" required>
                     </div>
                     <button onclick="login()" class="btn btn-primary">Masuk</button>
                 </div>
@@ -69,17 +77,25 @@
 
             <div class="card">
                 <h2>📄 Upload Skripsi</h2>
-                <p>Upload file skripsi Anda (PDF atau TXT) untuk memulai simulasi sidang</p>
+                <p>Upload file skripsi Anda (PDF, TXT, atau DOCX)</p>
                 <div class="upload-area">
-                    <input type="file" id="thesis-file" accept=".pdf,.txt" onchange="handleFileSelect()">
+                    <input type="file" id="thesis-file" accept=".pdf,.txt,.docx" onchange="handleFileSelect()">
                     <label for="thesis-file" class="upload-label">
                         <span class="upload-icon">📁</span>
-                        <span id="file-name">Pilih file PDF atau TXT</span>
+                        <span id="file-name">Pilih file PDF, TXT, atau DOCX</span>
                     </label>
                     <button onclick="uploadThesis()" class="btn btn-primary" id="upload-btn" disabled>Upload Skripsi</button>
                 </div>
 
                 <div id="thesis-list"></div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <h2>📝 Koreksi Skripsi dengan AI</h2>
+                <p>Gunakan editor AI untuk memperbaiki typo, grammar, sitasi, dan format skripsi Anda</p>
+                <button onclick="openEditor()" class="btn btn-success" style="width: 100%;">
+                    Buka Editor AI
+                </button>
             </div>
         </div>
 

@@ -2,11 +2,15 @@ const express = require('express');
 const multer = require('multer');
 const sqlite3 = require('sqlite3').verbose();
 const pdfParse = require('pdf-parse');
+const mammoth = require('mammoth');
 const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const FormData = require('form-data');
+const session = require('express-session');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
 require('dotenv').config();
 
 // Import AI SDKs
@@ -45,6 +49,62 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static('public'));
+
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'thesis-correction-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 hours
+}));
+
+// Passport initialization
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Passport serialization
+passport.serializeUser((user, done) => {
+  done(null, user);
+});
+
+passport.deserializeUser((user, done) => {
+  done(null, user);
+});
+
+// Google OAuth Strategy
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/auth/google/callback'
+  },
+  (accessToken, refreshToken, profile, done) => {
+    // Check if user exists or create new one
+    const email = profile.emails[0].value;
+    const name = profile.displayName;
+
+    db.get('SELECT * FROM students WHERE email = ?', [email], (err, user) => {
+      if (user) {
+        return done(null, user);
+      } else {
+        // Create new student account
+        db.run(
+          'INSERT INTO students (nama, email, google_id, status) VALUES (?, ?, ?, ?)',
+          [name, email, profile.id, 'active'],
+          function(err) {
+            if (err) {
+              return done(err);
+            }
+            db.get('SELECT * FROM students WHERE id = ?', [this.lastID], (err, newUser) => {
+              return done(null, newUser);
+            });
+          }
+        );
+      }
+    });
+  }));
+  console.log('✓ Google OAuth configured');
+}
 
 // Database setup
 const db = new sqlite3.Database('./thesis_defense.db', (err) => {
@@ -119,9 +179,11 @@ Gaya pertanyaan:
   db.run(`
     CREATE TABLE IF NOT EXISTS students (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nim TEXT UNIQUE NOT NULL,
+      nim TEXT UNIQUE,
       nama TEXT NOT NULL,
-      no_hp TEXT UNIQUE NOT NULL,
+      no_hp TEXT UNIQUE,
+      email TEXT UNIQUE,
+      google_id TEXT UNIQUE,
       status TEXT DEFAULT 'active',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -134,8 +196,39 @@ Gaya pertanyaan:
       filename TEXT NOT NULL,
       content TEXT NOT NULL,
       file_path TEXT,
+      file_type TEXT,
       uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (student_id) REFERENCES students(id)
+    )
+  `);
+
+  // Table for editable thesis documents
+  db.run(`
+    CREATE TABLE IF NOT EXISTS thesis_documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      student_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      original_filename TEXT,
+      template_type TEXT,
+      last_edited DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (student_id) REFERENCES students(id)
+    )
+  `);
+
+  // Table for correction history
+  db.run(`
+    CREATE TABLE IF NOT EXISTS correction_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id INTEGER NOT NULL,
+      correction_type TEXT NOT NULL,
+      original_text TEXT NOT NULL,
+      corrected_text TEXT NOT NULL,
+      suggestion TEXT,
+      applied BOOLEAN DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (document_id) REFERENCES thesis_documents(id)
     )
   `);
 
@@ -185,14 +278,16 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /pdf|txt/;
+    const allowedTypes = /pdf|txt|docx/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    const mimetype = file.mimetype === 'application/pdf' ||
+                     file.mimetype === 'text/plain' ||
+                     file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
-    if (extname && (mimetype || file.mimetype === 'text/plain')) {
+    if (extname && mimetype) {
       cb(null, true);
     } else {
-      cb(new Error('Only PDF and TXT files are allowed'));
+      cb(new Error('Only PDF, TXT, and DOCX files are allowed'));
     }
   },
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
@@ -478,6 +573,7 @@ app.post('/api/upload-thesis', upload.single('thesis'), async (req, res) => {
     }
 
     let content = '';
+    let fileType = path.extname(file.originalname).toLowerCase().replace('.', '');
 
     // Extract text from file
     if (file.mimetype === 'application/pdf') {
@@ -486,10 +582,14 @@ app.post('/api/upload-thesis', upload.single('thesis'), async (req, res) => {
       content = pdfData.text;
     } else if (file.mimetype === 'text/plain') {
       content = fs.readFileSync(file.path, 'utf8');
+    } else if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      const dataBuffer = fs.readFileSync(file.path);
+      const result = await mammoth.extractRawText({ buffer: dataBuffer });
+      content = result.value;
     }
 
-    const query = 'INSERT INTO thesis_uploads (student_id, filename, content) VALUES (?, ?, ?)';
-    db.run(query, [studentId, file.originalname, content], function(err) {
+    const query = 'INSERT INTO thesis_uploads (student_id, filename, content, file_type, file_path) VALUES (?, ?, ?, ?, ?)';
+    db.run(query, [studentId, file.originalname, content, fileType, file.path], function(err) {
       if (err) {
         return res.status(500).json({ error: 'Error saat menyimpan file' });
       }
@@ -497,7 +597,8 @@ app.post('/api/upload-thesis', upload.single('thesis'), async (req, res) => {
       res.json({
         success: true,
         message: 'File berhasil diupload',
-        thesisId: this.lastID
+        thesisId: this.lastID,
+        fileType: fileType
       });
     });
   } catch (error) {
@@ -1101,6 +1202,493 @@ async function getAISettings() {
     });
   });
 }
+
+// ============== GOOGLE OAUTH ROUTES ==============
+
+// Initiate Google OAuth
+app.get('/auth/google',
+  passport.authenticate('google', { scope: ['profile', 'email'] })
+);
+
+// Google OAuth callback
+app.get('/auth/google/callback',
+  passport.authenticate('google', { failureRedirect: '/' }),
+  (req, res) => {
+    // Successful authentication
+    res.redirect('/?student=' + JSON.stringify(req.user));
+  }
+);
+
+// Logout
+app.get('/auth/logout', (req, res) => {
+  req.logout(() => {
+    res.redirect('/');
+  });
+});
+
+// ============== AI CORRECTION ENDPOINTS ==============
+
+// AI Typo and Grammar Correction
+app.post('/api/correct/typo-grammar', async (req, res) => {
+  try {
+    const { text, documentId } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: 'Text harus diisi' });
+    }
+
+    const systemPrompt = `Anda adalah asisten AI yang ahli dalam mengoreksi kesalahan penulisan bahasa Indonesia.
+Analisis teks berikut dan perbaiki:
+1. Kesalahan ejaan (typo)
+2. Tata bahasa yang salah
+3. Penggunaan tanda baca yang tidak tepat
+4. Kesalahan penulisan kata
+
+Berikan respons dalam format JSON:
+{
+  "corrected_text": "teks yang sudah diperbaiki",
+  "corrections": [
+    {
+      "type": "typo|grammar|punctuation",
+      "original": "teks asli yang salah",
+      "corrected": "teks yang diperbaiki",
+      "explanation": "penjelasan singkat"
+    }
+  ],
+  "summary": "ringkasan perbaikan yang dilakukan"
+}
+
+Teks yang akan dikoreksi:
+${text}`;
+
+    let result = null;
+
+    if (AI_PROVIDER === 'openai' && openai) {
+      const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.3,
+        response_format: { type: "json_object" }
+      });
+      result = JSON.parse(completion.choices[0].message.content);
+
+    } else if (AI_PROVIDER === 'gemini' && gemini) {
+      const model = gemini.getGenerativeModel({ model: 'gemini-pro' });
+      const response = await model.generateContent(systemPrompt);
+      const text = response.response.text();
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      }
+
+    } else if (AI_PROVIDER === 'groq' && groq) {
+      const completion = await groq.chat.completions.create({
+        model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.3
+      });
+      const text = completion.choices[0].message.content;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      }
+    }
+
+    if (!result) {
+      return res.status(500).json({ error: 'AI service tidak tersedia' });
+    }
+
+    // Save corrections to history if documentId provided
+    if (documentId && result.corrections) {
+      for (const correction of result.corrections) {
+        db.run(
+          'INSERT INTO correction_history (document_id, correction_type, original_text, corrected_text, suggestion) VALUES (?, ?, ?, ?, ?)',
+          [documentId, correction.type, correction.original, correction.corrected, correction.explanation]
+        );
+      }
+    }
+
+    res.json({ success: true, result });
+
+  } catch (error) {
+    console.error('Typo/Grammar correction error:', error);
+    res.status(500).json({ error: 'Error saat mengoreksi teks' });
+  }
+});
+
+// AI Paraphrase
+app.post('/api/correct/paraphrase', async (req, res) => {
+  try {
+    const { text, documentId, style } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: 'Text harus diisi' });
+    }
+
+    const styleGuide = style || 'formal akademis';
+
+    const systemPrompt = `Anda adalah asisten AI yang ahli dalam parafrase teks bahasa Indonesia.
+Parafrasekan teks berikut dengan gaya ${styleGuide}, sambil mempertahankan makna aslinya.
+
+Berikan respons dalam format JSON:
+{
+  "paraphrased_text": "teks hasil parafrase",
+  "improvements": ["perbaikan 1", "perbaikan 2"],
+  "readability_score": "nilai keterbacaan (1-10)"
+}
+
+Teks yang akan diparafrase:
+${text}`;
+
+    let result = null;
+
+    if (AI_PROVIDER === 'openai' && openai) {
+      const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.7,
+        response_format: { type: "json_object" }
+      });
+      result = JSON.parse(completion.choices[0].message.content);
+
+    } else if (AI_PROVIDER === 'gemini' && gemini) {
+      const model = gemini.getGenerativeModel({ model: 'gemini-pro' });
+      const response = await model.generateContent(systemPrompt);
+      const text = response.response.text();
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      }
+
+    } else if (AI_PROVIDER === 'groq' && groq) {
+      const completion = await groq.chat.completions.create({
+        model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.7
+      });
+      const text = completion.choices[0].message.content;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      }
+    }
+
+    if (!result) {
+      return res.status(500).json({ error: 'AI service tidak tersedia' });
+    }
+
+    // Save to correction history
+    if (documentId) {
+      db.run(
+        'INSERT INTO correction_history (document_id, correction_type, original_text, corrected_text, suggestion) VALUES (?, ?, ?, ?, ?)',
+        [documentId, 'paraphrase', text, result.paraphrased_text, JSON.stringify(result.improvements)]
+      );
+    }
+
+    res.json({ success: true, result });
+
+  } catch (error) {
+    console.error('Paraphrase error:', error);
+    res.status(500).json({ error: 'Error saat memparafrase teks' });
+  }
+});
+
+// AI Citation Correction
+app.post('/api/correct/citation', async (req, res) => {
+  try {
+    const { text, documentId, citationStyle } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: 'Text harus diisi' });
+    }
+
+    const style = citationStyle || 'APA';
+
+    const systemPrompt = `Anda adalah asisten AI yang ahli dalam penulisan sitasi akademis.
+Analisis teks berikut dan perbaiki sitasi sesuai format ${style}.
+
+Berikan respons dalam format JSON:
+{
+  "corrected_text": "teks dengan sitasi yang diperbaiki",
+  "citations_found": [
+    {
+      "original": "sitasi asli",
+      "corrected": "sitasi yang diperbaiki",
+      "issues": ["masalah yang ditemukan"]
+    }
+  ],
+  "missing_citations": ["bagian yang perlu sitasi"],
+  "suggestions": ["saran perbaikan"]
+}
+
+Teks yang akan diperiksa:
+${text}`;
+
+    let result = null;
+
+    if (AI_PROVIDER === 'openai' && openai) {
+      const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.3,
+        response_format: { type: "json_object" }
+      });
+      result = JSON.parse(completion.choices[0].message.content);
+
+    } else if (AI_PROVIDER === 'gemini' && gemini) {
+      const model = gemini.getGenerativeModel({ model: 'gemini-pro' });
+      const response = await model.generateContent(systemPrompt);
+      const text = response.response.text();
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      }
+
+    } else if (AI_PROVIDER === 'groq' && groq) {
+      const completion = await groq.chat.completions.create({
+        model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.3
+      });
+      const text = completion.choices[0].message.content;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      }
+    }
+
+    if (!result) {
+      return res.status(500).json({ error: 'AI service tidak tersedia' });
+    }
+
+    // Save to correction history
+    if (documentId && result.citations_found) {
+      for (const citation of result.citations_found) {
+        db.run(
+          'INSERT INTO correction_history (document_id, correction_type, original_text, corrected_text, suggestion) VALUES (?, ?, ?, ?, ?)',
+          [documentId, 'citation', citation.original, citation.corrected, JSON.stringify(citation.issues)]
+        );
+      }
+    }
+
+    res.json({ success: true, result });
+
+  } catch (error) {
+    console.error('Citation correction error:', error);
+    res.status(500).json({ error: 'Error saat mengoreksi sitasi' });
+  }
+});
+
+// AI Format Thesis
+app.post('/api/correct/format', async (req, res) => {
+  try {
+    const { text, documentId, template } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: 'Text harus diisi' });
+    }
+
+    const templateType = template || 'standard';
+
+    const systemPrompt = `Anda adalah asisten AI yang ahli dalam memformat dokumen skripsi.
+Format teks berikut sesuai template skripsi ${templateType} dengan struktur:
+1. Judul (centered, bold, uppercase)
+2. Bab dan Sub-bab (numbered, bold)
+3. Paragraf (justified, indented)
+4. Spacing yang tepat
+
+Berikan respons dalam format JSON:
+{
+  "formatted_text": "teks yang sudah diformat",
+  "structure": {
+    "chapters": ["daftar bab"],
+    "sections": ["daftar sub-bab"]
+  },
+  "formatting_applied": ["daftar format yang diterapkan"]
+}
+
+Teks yang akan diformat:
+${text}`;
+
+    let result = null;
+
+    if (AI_PROVIDER === 'openai' && openai) {
+      const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.3,
+        response_format: { type: "json_object" }
+      });
+      result = JSON.parse(completion.choices[0].message.content);
+
+    } else if (AI_PROVIDER === 'gemini' && gemini) {
+      const model = gemini.getGenerativeModel({ model: 'gemini-pro' });
+      const response = await model.generateContent(systemPrompt);
+      const text = response.response.text();
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      }
+
+    } else if (AI_PROVIDER === 'groq' && groq) {
+      const completion = await groq.chat.completions.create({
+        model: process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.3
+      });
+      const text = completion.choices[0].message.content;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      }
+    }
+
+    if (!result) {
+      return res.status(500).json({ error: 'AI service tidak tersedia' });
+    }
+
+    // Save to correction history
+    if (documentId) {
+      db.run(
+        'INSERT INTO correction_history (document_id, correction_type, original_text, corrected_text, suggestion) VALUES (?, ?, ?, ?, ?)',
+        [documentId, 'format', text.substring(0, 500), result.formatted_text.substring(0, 500), JSON.stringify(result.formatting_applied)]
+      );
+    }
+
+    res.json({ success: true, result });
+
+  } catch (error) {
+    console.error('Format error:', error);
+    res.status(500).json({ error: 'Error saat memformat teks' });
+  }
+});
+
+// ============== DOCUMENT MANAGEMENT ENDPOINTS ==============
+
+// Create new document from uploaded file
+app.post('/api/documents/create', async (req, res) => {
+  try {
+    const { studentId, thesisId, title } = req.body;
+
+    if (thesisId) {
+      // Create from uploaded thesis
+      db.get('SELECT content, filename FROM thesis_uploads WHERE id = ?', [thesisId], (err, thesis) => {
+        if (err || !thesis) {
+          return res.status(404).json({ error: 'File skripsi tidak ditemukan' });
+        }
+
+        const query = 'INSERT INTO thesis_documents (student_id, title, content, original_filename) VALUES (?, ?, ?, ?)';
+        db.run(query, [studentId, title || thesis.filename, thesis.content, thesis.filename], function(err) {
+          if (err) {
+            return res.status(500).json({ error: 'Error membuat dokumen' });
+          }
+
+          res.json({
+            success: true,
+            documentId: this.lastID,
+            message: 'Dokumen berhasil dibuat'
+          });
+        });
+      });
+    } else if (title) {
+      // Create empty document
+      const query = 'INSERT INTO thesis_documents (student_id, title, content) VALUES (?, ?, ?)';
+      db.run(query, [studentId, title, '<p><br></p>'], function(err) {
+        if (err) {
+          return res.status(500).json({ error: 'Error membuat dokumen' });
+        }
+
+        res.json({
+          success: true,
+          documentId: this.lastID,
+          message: 'Dokumen kosong berhasil dibuat'
+        });
+      });
+    } else {
+      return res.status(400).json({ error: 'Harus menyediakan thesisId atau title' });
+    }
+  } catch (error) {
+    console.error('Create document error:', error);
+    res.status(500).json({ error: 'Error membuat dokumen' });
+  }
+});
+
+// Get all documents for a student
+app.get('/api/documents/:studentId', (req, res) => {
+  const { studentId } = req.params;
+
+  const query = 'SELECT id, title, original_filename, template_type, last_edited, created_at FROM thesis_documents WHERE student_id = ? ORDER BY last_edited DESC';
+  db.all(query, [studentId], (err, documents) => {
+    if (err) {
+      return res.status(500).json({ error: 'Error mengambil dokumen' });
+    }
+    res.json({ success: true, documents });
+  });
+});
+
+// Get document content
+app.get('/api/documents/content/:documentId', (req, res) => {
+  const { documentId } = req.params;
+
+  const query = 'SELECT * FROM thesis_documents WHERE id = ?';
+  db.get(query, [documentId], (err, document) => {
+    if (err || !document) {
+      return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    }
+    res.json({ success: true, document });
+  });
+});
+
+// Update document content
+app.put('/api/documents/:documentId', (req, res) => {
+  const { documentId } = req.params;
+  const { content, title } = req.body;
+
+  let query = 'UPDATE thesis_documents SET content = ?, last_edited = CURRENT_TIMESTAMP';
+  const params = [content];
+
+  if (title) {
+    query += ', title = ?';
+    params.push(title);
+  }
+
+  query += ' WHERE id = ?';
+  params.push(documentId);
+
+  db.run(query, params, function(err) {
+    if (err) {
+      return res.status(500).json({ error: 'Error mengupdate dokumen' });
+    }
+    res.json({ success: true, message: 'Dokumen berhasil diupdate' });
+  });
+});
+
+// Delete document
+app.delete('/api/documents/:documentId', (req, res) => {
+  const { documentId } = req.params;
+
+  // Delete correction history first
+  db.run('DELETE FROM correction_history WHERE document_id = ?', [documentId]);
+  db.run('DELETE FROM thesis_documents WHERE id = ?', [documentId], function(err) {
+    if (err) {
+      return res.status(500).json({ error: 'Error menghapus dokumen' });
+    }
+    res.json({ success: true, message: 'Dokumen berhasil dihapus' });
+  });
+});
+
+// Get correction history for a document
+app.get('/api/corrections/:documentId', (req, res) => {
+  const { documentId } = req.params;
+
+  const query = 'SELECT * FROM correction_history WHERE document_id = ? ORDER BY created_at DESC LIMIT 100';
+  db.all(query, [documentId], (err, corrections) => {
+    if (err) {
+      return res.status(500).json({ error: 'Error mengambil riwayat koreksi' });
+    }
+    res.json({ success: true, corrections });
+  });
+});
 
 // Start server
 app.listen(PORT, () => {
