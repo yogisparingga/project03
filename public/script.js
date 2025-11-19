@@ -25,6 +25,21 @@ async function checkAICapabilities() {
 document.addEventListener('DOMContentLoaded', () => {
     checkAICapabilities();
 
+    // Check if redirected from Google OAuth
+    const urlParams = new URLSearchParams(window.location.search);
+    const studentParam = urlParams.get('student');
+    if (studentParam) {
+        try {
+            currentStudent = JSON.parse(studentParam);
+            localStorage.setItem('studentData', JSON.stringify(currentStudent));
+            showDashboard();
+            // Clean URL
+            window.history.replaceState({}, document.title, '/');
+        } catch (error) {
+            console.error('Error parsing student data:', error);
+        }
+    }
+
     // Login form enter key
     document.getElementById('login-nim')?.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') login();
@@ -90,24 +105,26 @@ async function register() {
 
 // Login
 async function login() {
-    const nim = document.getElementById('login-nim').value.trim();
+    const identifier = document.getElementById('login-nim').value.trim();
 
-    if (!nim) {
-        showMessage('NIM harus diisi!', 'error');
+    if (!identifier) {
+        showMessage('NIM atau No HP harus diisi!', 'error');
         return;
     }
 
     try {
-        const response = await fetch('/api/login', {
+        // Try login with NIM first
+        let response = await fetch('/api/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ nim })
+            body: JSON.stringify({ nim: identifier })
         });
 
-        const data = await response.json();
+        let data = await response.json();
 
         if (response.ok) {
             currentStudent = data.student;
+            localStorage.setItem('studentData', JSON.stringify(currentStudent));
             showDashboard();
         } else {
             showMessage(data.error || 'Login gagal', 'error');
@@ -123,17 +140,38 @@ function logout() {
     currentStudent = null;
     currentSession = null;
     thesisContent = '';
+    localStorage.removeItem('studentData');
     document.getElementById('auth-section').style.display = 'block';
     document.getElementById('dashboard-section').style.display = 'none';
     document.getElementById('login-nim').value = '';
+}
+
+// Open Editor
+function openEditor() {
+    if (!currentStudent) {
+        showMessage('Silakan login terlebih dahulu', 'error');
+        return;
+    }
+
+    // Save student data to localStorage
+    localStorage.setItem('studentData', JSON.stringify(currentStudent));
+
+    // Redirect to editor page
+    window.location.href = '/editor.html';
 }
 
 // Show Dashboard
 function showDashboard() {
     document.getElementById('auth-section').style.display = 'none';
     document.getElementById('dashboard-section').style.display = 'block';
+
+    // Display student info (NIM or email)
+    const identifier = currentStudent.nim || currentStudent.email || currentStudent.no_hp;
     document.getElementById('student-info').textContent =
-        `${currentStudent.nama} (${currentStudent.nim})`;
+        `${currentStudent.nama}${identifier ? ` (${identifier})` : ''}`;
+
+    // Save to localStorage for editor
+    localStorage.setItem('studentData', JSON.stringify(currentStudent));
 
     loadThesisList();
 }

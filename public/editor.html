@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor Skripsi - AI Thesis Corrector</title>
+    <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 24px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 250px 1fr 300px;
+            gap: 20px;
+        }
+
+        .sidebar {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            height: fit-content;
+        }
+
+        .sidebar h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .document-list {
+            list-style: none;
+        }
+
+        .document-item {
+            padding: 10px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .document-item:hover {
+            background: #e9ecef;
+        }
+
+        .document-item.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .editor-container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .editor-toolbar {
+            background: #f8f9fa;
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .editor-title {
+            width: 100%;
+            padding: 10px;
+            font-size: 18px;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+
+        #editor {
+            height: 600px;
+        }
+
+        .ai-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .ai-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .ai-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        .btn-warning {
+            background: #ffc107;
+            color: #212529;
+        }
+
+        .btn-warning:hover {
+            background: #e0a800;
+        }
+
+        .btn-info {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .btn-info:hover {
+            background: #138496;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .correction-result {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .correction-item {
+            padding: 10px;
+            margin-bottom: 10px;
+            background: white;
+            border-left: 4px solid #667eea;
+            border-radius: 3px;
+        }
+
+        .correction-type {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .correction-text {
+            font-size: 14px;
+            color: #495057;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }
+
+        .message {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .modal-content h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .history-item {
+            padding: 8px;
+            margin-bottom: 5px;
+            background: white;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .history-type {
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        @media (max-width: 1200px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+
+            .ai-panel {
+                order: -1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>📝 Editor Skripsi AI</h1>
+                <p id="student-info"></p>
+            </div>
+            <div class="header-actions">
+                <button onclick="saveDocument()" class="btn btn-success">💾 Simpan</button>
+                <button onclick="backToDashboard()" class="btn btn-secondary">← Kembali</button>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <!-- Sidebar - Document List -->
+            <div class="sidebar">
+                <h3>📁 Dokumen Saya</h3>
+                <button onclick="showNewDocumentModal()" class="btn btn-primary" style="width: 100%; margin-bottom: 15px;">
+                    ➕ Dokumen Baru
+                </button>
+                <ul class="document-list" id="document-list">
+                    <!-- Documents will be loaded here -->
+                </ul>
+            </div>
+
+            <!-- Editor -->
+            <div class="editor-container">
+                <div class="editor-toolbar">
+                    <input type="text" id="document-title" class="editor-title" placeholder="Judul Dokumen">
+                    <div id="toolbar-container"></div>
+                </div>
+                <div id="editor"></div>
+            </div>
+
+            <!-- AI Panel -->
+            <div class="ai-panel">
+                <h3>🤖 Asisten AI</h3>
+                <div class="ai-actions">
+                    <button onclick="correctTypoGrammar()" class="btn btn-primary">
+                        ✓ Koreksi Typo & Grammar
+                    </button>
+                    <button onclick="paraphraseText()" class="btn btn-info">
+                        🔄 Parafrase
+                    </button>
+                    <button onclick="correctCitation()" class="btn btn-warning">
+                        📚 Perbaiki Sitasi
+                    </button>
+                    <button onclick="formatDocument()" class="btn btn-success">
+                        📋 Format Dokumen
+                    </button>
+                </div>
+
+                <div id="correction-result" class="correction-result" style="display: none;"></div>
+
+                <div style="margin-top: 20px;">
+                    <h3>📊 Riwayat Koreksi</h3>
+                    <div id="correction-history" style="max-height: 300px; overflow-y: auto;">
+                        <!-- Correction history will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Document Modal -->
+    <div id="new-document-modal" class="modal">
+        <div class="modal-content">
+            <h2>Buat Dokumen Baru</h2>
+            <div class="form-group">
+                <label>Pilih File yang Sudah Diupload:</label>
+                <select id="thesis-select">
+                    <option value="">-- Pilih File --</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Atau Buat Dokumen Kosong:</label>
+                <input type="text" id="new-document-title" placeholder="Judul Dokumen">
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button onclick="closeNewDocumentModal()" class="btn btn-secondary">Batal</button>
+                <button onclick="createDocument()" class="btn btn-primary">Buat</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
+    <script src="editor-script.js"></script>
+</body>
+</html>
